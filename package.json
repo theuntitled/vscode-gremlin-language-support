@@ -1,0 +1,59 @@
+{
+	"name": "vscode-gremlin-language-support",
+	"displayName": "Gremlin language Support",
+	"description": "Gremlin language server and client for VS Code",
+	"version": "0.0.1",
+	"license": "MIT",
+	"publisher": "theuntitled",
+	"author": {
+		"name": "Josef Fazekas"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/theuntitled/vscode-gremlin-language-support"
+	},
+	"engines": {
+		"vscode": "^1.34.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"keywords": [
+		"gremlin",
+		"tinkerpop"
+	],
+	"preview": true,
+	"activationEvents": [
+		"onLanguage:gremlin"
+	],
+	"main": "./client/out/extension",
+	"contributes": {
+		"languages": [
+			{
+				"id": "gremlin",
+				"extensions": [
+					".gremlin",
+					".gql"
+				]
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -b",
+		"lint": "eslint . --ext .ts,.tsx",
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+		"watch": "tsc -b -w",
+		"test": "sh ./scripts/e2e.sh"
+	},
+	"devDependencies": {
+		"@types/node": "^12.12.0",
+		"@types/mocha": "^8.0.3",
+		"@types/vscode": "^1.34.0",
+		"@typescript-eslint/eslint-plugin": "^4.16.0",
+		"@typescript-eslint/parser": "^4.16.0",
+		"eslint": "^7.21.0",
+		"typescript": "^4.2.2",
+		"mocha": "^8.1.1"
+	}
+}

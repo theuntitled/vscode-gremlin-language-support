@@ -1,0 +1,24 @@
+{
+	"name": "vscode-gremlin-language-server-client",
+	"description": "Gremlin language server client for VS Code.",
+	"version": "0.0.1",
+	"license": "MIT",
+	"publisher": "theuntitled",
+	"author": {
+		"name": "Josef Fazekas"
+	},
+	"engines": {
+		"vscode": "^1.52.0"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/theuntitled/vscode-gremlin-language-support"
+	},
+	"dependencies": {
+		"vscode-languageclient": "^7.0.0"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.52.0",
+		"vscode-test": "^1.3.0"
+	}
+}
