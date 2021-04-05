@@ -1,5 +1,5 @@
 {
-	"name": "vscode-gremlin-language-server-client",
+	"name": "vscode-gremlin-language-support-client",
 	"description": "Gremlin language server client for VS Code.",
 	"version": "0.0.1",
 	"license": "MIT",
