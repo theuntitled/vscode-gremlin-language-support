@@ -1,5 +1,6 @@
 import * as path from 'path';
-import { workspace, ExtensionContext } from 'vscode';
+import { workspace, ExtensionContext, languages, SemanticTokensLegend } from 'vscode';
+import { SemanticTokensFeature } from "vscode-languageclient/lib/common/semanticTokens";
 
 import {
 	LanguageClient,
@@ -8,20 +9,23 @@ import {
 	TransportKind
 } from 'vscode-languageclient/node';
 
+import GremlinDocumentSymbolProvider from './features/GremlinDocumentSymbolProvider';
+import { GremlinDocumentSemanticTokensProvider, legend } from './features/GremlinDocumentSemanticTokensProvider';
+
 let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
 	// The server is implemented in node
-	let serverModule = context.asAbsolutePath(
+	const serverModule = context.asAbsolutePath(
 		path.join('server', 'out', 'server.js')
 	);
 	// The debug options for the server
 	// --inspect=6009: runs the server in Node's Inspector mode so VS Code can attach to the server for debugging
-	let debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
+	const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
 
 	// If the extension is launched in debug mode then the debug server options are used
 	// Otherwise the run options are used
-	let serverOptions: ServerOptions = {
+	const serverOptions: ServerOptions = {
 		run: { module: serverModule, transport: TransportKind.ipc },
 		debug: {
 			module: serverModule,
@@ -30,10 +34,12 @@ export function activate(context: ExtensionContext) {
 		}
 	};
 
+	const documentSelector = [{ scheme: 'file', language: 'gremlin' }];
+
 	// Options to control the language client
-	let clientOptions: LanguageClientOptions = {
+	const clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
-		documentSelector: [{ scheme: 'file', language: 'gremlin' }],
+		documentSelector: documentSelector,
 		synchronize: {
 			// Notify the server about file changes to '.clientrc files contained in the workspace
 			fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
@@ -42,7 +48,7 @@ export function activate(context: ExtensionContext) {
 
 	// Create the language client and start the client.
 	client = new LanguageClient(
-		'languageServerExample',
+		'gremlinLanguageServer',
 		'Language Server Example',
 		serverOptions,
 		clientOptions
@@ -50,6 +56,9 @@ export function activate(context: ExtensionContext) {
 
 	// Start the client. This will also launch the server
 	client.start();
+
+	// languages.registerDocumentSymbolProvider(documentSelector, new GremlinDocumentSymbolProvider());
+	languages.registerDocumentSemanticTokensProvider(documentSelector, new GremlinDocumentSemanticTokensProvider(client), legend);
 }
 
 export function deactivate(): Thenable<void> | undefined {
