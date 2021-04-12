@@ -1,42 +1,44 @@
 import {
+	Range,
+	SymbolKind,
+	HoverParams,
+	MarkupKind,
+	SignatureHelp,
 	TextDocuments,
+	InsertTextMode,
 	CompletionItem,
+	DocumentSymbol,
+	InsertTextFormat,
 	ProposedFeatures,
 	InitializeParams,
 	InitializeResult,
 	createConnection,
+	CancellationToken,
 	CompletionItemKind,
+	DocumentColorParams,
+	SignatureHelpParams,
+	DocumentSymbolParams,
 	TextDocumentSyncKind,
-	ColorPresentationParams,
+	ParameterInformation,
+	SignatureInformation,
 	TextDocumentPositionParams,
 	DidChangeConfigurationNotification,
-	CancellationToken,
-	DocumentColorParams,
-	DocumentSymbolParams,
-	DocumentSymbol,
-	Range,
-	SymbolKind,
-	HoverParams,
-	Hover,
-	MarkupContent,
-	MarkupKind
-} from 'vscode-languageserver/node';
-import { ColorInformation, ColorPresentation, } from 'vscode';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+	MarkupContent
+} from "vscode-languageserver/node";
+import { TextDocument } from "vscode-languageserver-textdocument";
 
 import Token from "./language/Token";
-import { getTokens } from "./language/parser";
-import GremlinLanguageSettings from './GremlinLanguageSettings';
-import { parameterTypeToSymbolKind } from "./features/SemanticTokens";
-import { predicates } from "./language/predicates";
-import { PredicateMethods, TraversalMethods } from "./language/types";
 import { steps } from "./language/steps";
-
-const features = ProposedFeatures.all;
+import { getTokens } from "./language/parser";
+import { predicates } from "./language/predicates";
+import GremlinLanguageSettings from "./GremlinLanguageSettings";
+import { parameterTypeToSymbolKind } from "./features/SemanticTokens";
+import { PredicateMethods, TraversalMethods } from "./language/types";
+import { getActiveParameter, getSignatureDescription } from "./language/utilities";
 
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
-let connection = createConnection(features);
+let connection = createConnection(ProposedFeatures.all);
 
 let documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 
@@ -59,16 +61,22 @@ connection.onInitialize((params: InitializeParams) => {
 	const result: InitializeResult = {
 		capabilities: {
 			textDocumentSync: TextDocumentSyncKind.Incremental,
-			// Tell the client that this server supports code completion.
 			completionProvider: {
-				resolveProvider: true
+				resolveProvider: true,
+				// triggerCharacters: ["."]
 			},
 			colorProvider: {
-				documentSelector: [{ scheme: 'file', language: 'gremlin' }]
+				documentSelector: [{
+					scheme: 'file',
+					language: 'gremlin'
+				}]
 			},
 			documentSymbolProvider: {
 			},
 			hoverProvider: {
+			},
+			signatureHelpProvider: {
+				triggerCharacters: ["(", ","],
 			}
 		}
 	};
@@ -188,21 +196,159 @@ connection.onCompletion((textDocumentPosition: TextDocumentPositionParams, token
 	// The pass parameter contains the position of the text document in
 	// which code complete got requested. For the example we ignore this
 	// info and always provide the same completion items.
-	const document = documents.get(textDocumentPosition.textDocument.uri);
-	const position = textDocumentPosition.position;
+	// const document = documents.get(textDocumentPosition.textDocument.uri);
+	// const position = textDocumentPosition.position;
 
-	return [
-		{
-			label: 'TypeScript',
-			kind: CompletionItemKind.Text,
-			data: 1
-		},
-		{
-			label: 'JavaScript',
-			kind: CompletionItemKind.Text,
-			data: 2
-		}
-	];
+	// TODO: Find the current token and determine what should be suggested
+
+	const suggestions: CompletionItem[] = [];
+
+	Object.keys(steps).forEach((key: string) => {
+		const signature = steps[key as TraversalMethods][0];
+
+		suggestions.push({
+			data: key,
+			label: key,
+			kind: CompletionItemKind.Method,
+			insertTextMode: InsertTextMode.asIs,
+			insertTextFormat: InsertTextFormat.Snippet,
+			detail: `(traversal) ${key}(${signature.parameters.map((parameter) => `${parameter.name}${(parameter.multiple ? "[]" : "")}`).join(", ")})`,
+			// insertText: `${key}(${signature.parameters.map((parameter, parameterIndex) => `\${${parameterIndex + 1}:${parameter.name}}`).join(", ")}$0)`,
+			documentation: {
+				kind: "markdown",
+				value: signature.description
+			}
+		} as CompletionItem);
+	});
+
+	Object.keys(predicates).forEach((key: string) => {
+		const signature = predicates[key as PredicateMethods][0];
+
+		suggestions.push({
+			data: key,
+			label: key,
+			kind: CompletionItemKind.Method,
+			insertTextMode: InsertTextMode.asIs,
+			insertTextFormat: InsertTextFormat.Snippet,
+			detail: `(predicate) ${key}(${signature.parameters.map((parameter) => `${parameter.name}${(parameter.multiple ? "[]" : "")}`).join(", ")})`,
+			// insertText: `${key}(${signature.parameters.map((parameter, parameterIndex) => `\${${parameterIndex + 1}:${parameter.name}}`).join(", ")}$0)`,
+			documentation: {
+				kind: "markdown",
+				value: signature.description
+			}
+		} as CompletionItem);
+	});
+
+	return suggestions;
+});
+
+connection.onSignatureHelp(async (params: SignatureHelpParams, token: CancellationToken): Promise<SignatureHelp | undefined> => {
+	const documentTokens = await getDocumentTokens(params.textDocument.uri, token);
+	const document = documents.get(params.textDocument.uri);
+
+	if (!document) {
+		return;
+	}
+
+	let offset = document.offsetAt(params.position);
+
+	// if (params.context?.triggerKind === SignatureHelpTriggerKind.TriggerCharacter && params.context.triggerCharacter === "(") {}
+
+	let bestMatch: Token | undefined;
+	let closestMatch: Token | undefined;
+
+	const searchRecursive = (tokens: Token[]) => {
+		tokens.forEach((token: Token) => {
+			if (token.range.start <= offset && token.range.end >= offset) {
+				bestMatch = token;
+			}
+
+			if (token.range.end < offset) {
+				closestMatch = token;
+			}
+
+			if (Array.isArray(token.arguments)) {
+				searchRecursive(token.arguments);
+			}
+
+			let next: Token | undefined = token.next;
+
+			while (!!next) {
+				searchRecursive([next]);
+
+				next = next.next;
+			}
+		});
+	};
+
+	searchRecursive(documentTokens);
+
+	if (!bestMatch) {
+		bestMatch = closestMatch;
+	}
+
+	if (!bestMatch) {
+		return;
+	}
+
+	if (bestMatch.type !== "traversal" && bestMatch.type !== "predicate" && !!bestMatch.parent) {
+		bestMatch = bestMatch.parent;
+	}
+
+	if (bestMatch.type !== "traversal" && bestMatch.type !== "predicate") {
+		return;
+	}
+
+	let activeParameter: number | null = null;
+	let activeSignature: number | null = bestMatch.signatureIndex || null;
+
+	if (typeof bestMatch.arguments !== "undefined") {
+		activeParameter = getActiveParameter(bestMatch, offset);
+	}
+
+	if (bestMatch.type === "traversal") {
+		return {
+			activeParameter,
+			activeSignature,
+			signatures: steps[bestMatch.label as TraversalMethods].map((signature) => {
+				const parameters = signature.parameters.map((parameter) => {
+					return ParameterInformation.create(parameter.name, parameter.description);
+				});
+
+				return {
+					parameters,
+					activeParameter,
+					label: `${bestMatch!.label}(${signature.parameters.map((parameter) => `${parameter.name}${(parameter.multiple ? "[]" : "")}: ${parameter.type}`).join(", ")})`,
+					documentation: {
+						kind: "markdown",
+						value: getSignatureDescription(signature).value
+					} as MarkupContent
+				} as SignatureInformation;
+			})
+		} as SignatureHelp;
+	}
+
+	if (bestMatch.type === "predicate") {
+		return {
+			activeParameter,
+			activeSignature,
+			signatures: predicates[bestMatch.label as PredicateMethods].map((signature) => {
+				const parameters = signature.parameters.map((parameter) => {
+					return ParameterInformation.create(parameter.name, parameter.description);
+				});
+
+				return {
+					parameters,
+					activeParameter,
+					label: `${bestMatch!.label}(${signature.parameters.map((parameter) => `${parameter.name}${(parameter.multiple ? "[]" : "")}: ${parameter.type}`).join(", ")})`,
+					documentation: {
+						kind: "markdown",
+						value: getSignatureDescription(signature).value
+					} as MarkupContent
+				} as SignatureInformation;
+			})
+		} as SignatureHelp;
+	}
 });
 
 // This handler resolves additional information for the item selected in
@@ -239,6 +385,14 @@ connection.onHover(async (params: HoverParams, token: CancellationToken) => {
 
 			if (Array.isArray(token.arguments)) {
 				searchRecursive(token.arguments);
+			}
+
+			let next: Token | undefined = token.next;
+
+			while (!!next) {
+				searchRecursive([next]);
+
+				next = next.next;
 			}
 		});
 	};
@@ -291,7 +445,7 @@ ${signature.description}
 ${parameterString}
 `;
 	}
-	
+
 	return {
 		// TODO: Die Docs für die Methode raussuchen
 		contents: {
@@ -339,9 +493,27 @@ connection.onDocumentSymbol(async (params: DocumentSymbolParams, token: Cancella
 				kind = SymbolKind.Module;
 			}
 
+			let detail = token.type as string;
+
+			if (token.type === "traversal" || token.type === "predicate") {
+				detail = token.body;
+			}
+
+			/*if (token.type === "traversal" && typeof token.signatureIndex === "number") {
+				const signature = steps[token.label as TraversalMethods][token.signatureIndex];
+
+				detail = `${token.label}(${signature.parameters.map(parameter => `${(parameter.multiple ? "..." : "")}${parameter.name}: ${parameter.type}`).join(", ")})`;
+			}
+
+			if (token.type === "predicate" && typeof token.signatureIndex === "number") {
+				const signature = predicates[token.label as PredicateMethods][token.signatureIndex];
+
+				detail = `${token.label}(${signature.parameters.map(parameter => `${(parameter.multiple ? "..." : "")}${parameter.name}: ${parameter.type}`).join(", ")})`;
+			}*/
+
 			results.push(DocumentSymbol.create(
-				token.label,
-				token.label,
+				token.label || "*empty-value*",
+				detail,
 				kind,
 				range,
 				range
@@ -349,6 +521,14 @@ connection.onDocumentSymbol(async (params: DocumentSymbolParams, token: Cancella
 
 			if (Array.isArray(token.arguments)) {
 				addTokens(token.arguments);
+			}
+
+			let next = token.next;
+
+			while (!!next) {
+				addTokens([next]);
+
+				next = next.next;
 			}
 		});
 	};

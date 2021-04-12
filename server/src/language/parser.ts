@@ -8,33 +8,62 @@ import { PredicateMethods, TraversalMethods } from './types';
 
 import Token from "./Token";
 import TextRange from "./TextRange";
+import { getBestGuessSignatureIndex } from "./utilities";
 
 const stopRegExp = /[()\.]/;
 const quoteRegExp = /[\"\']/;
 const numberRegExp = /[0-9]*/;
+const whiteSpaceRegExp = /[\s]/;
 
 const isNumber = (character: string) => !isNaN(parseFloat(character));
+const isWhiteSpace = (character: string) => whiteSpaceRegExp.test(character);
 const isQuote = (character: string) => character === "\"" || character === "'";
 const isNewLine = (character: string) => character === "\r" || character === "\n";
 
 const stepKeys = Object.keys(steps);
 const predicateKeys = Object.keys(predicates);
 
-const parse = async (text: string, start: number, end: number, cancellationToken: CancellationToken): Promise<Token[]> => {
+const parse = async (text: string, start: number, end: number, cancellationToken: CancellationToken, previous?: Token, parent?: Token): Promise<Token[]> => {
 	const results: Token[] = [];
+
+	let isInChain = false;
+
+	const addResult = (token: Token) => {
+		if (isInChain && !!previous) {
+			previous.next = token;
+
+			previous = previous.next;
+		} else {
+			results.push(token);
+		}
+
+		isInChain = false;
+	};
 
 	for (let charIndex = start; charIndex < end; charIndex++) {
 		if (cancellationToken.isCancellationRequested) {
 			return [];
 		}
-		
+
 		const character = text[charIndex];
 
 		if (isNewLine(character)) {
 			continue;
 		}
 
+		if (isWhiteSpace(character)) {
+			continue;
+		}
+
+		// TODO: The chain has to be resolved, so it makes a difference if there's a "." or ","
 		if (character === ".") {
+			isInChain = true;
+
+			continue;
+		}
+
+		// TODO: The chain has to be resolved, so it makes a difference if there's a "." or ","
+		if (character === ",") {
 			continue;
 		}
 
@@ -43,7 +72,7 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 		if (isQuote(character)) {
 			stopIndex = text.substr(charIndex + 1).search(quoteRegExp);
 
-			results.push({
+			addResult({
 				isValid: true,
 				type: "string",
 				body: text.substring(charIndex, charIndex + stopIndex + 2),
@@ -65,7 +94,7 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 
 		// Lookahead to see if its a boolean
 		if (character === "t" && text.substr(charIndex, 4) === "true") {
-			results.push({
+			addResult({
 				isValid: true,
 				type: "boolean",
 				label: "true",
@@ -87,7 +116,7 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 
 		// Lookahead to see if its a boolean
 		if (character === "f" && text.substr(charIndex, 5) === "false") {
-			results.push({
+			addResult({
 				isValid: true,
 				type: "boolean",
 				label: "false",
@@ -109,7 +138,7 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 
 		// Lookahead to see if its a incr comparator
 		if (character === "i" && text.substr(charIndex, 4) === "incr") {
-			results.push({
+			addResult({
 				isValid: true,
 				type: "comparator",
 				label: "incr",
@@ -131,7 +160,7 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 
 		// Lookahead to see if its a decr comparator
 		if (character === "d" && text.substr(charIndex, 4) === "decr") {
-			results.push({
+			addResult({
 				isValid: true,
 				type: "comparator",
 				label: "decr",
@@ -179,7 +208,7 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 				numberToken.type = "long";
 			}
 
-			results.push(numberToken);
+			addResult(numberToken);
 
 			charIndex += number.length;
 
@@ -192,7 +221,7 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 		const label = text.substr(charIndex, stopIndex).trimLeft();
 
 		if (label === "g") {
-			results.push({
+			addResult({
 				label: label,
 				isValid: true,
 				type: "traversal",
@@ -214,17 +243,40 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 			const signatures = steps[label as TraversalMethods];
 
 			const methodToken: Token = {
+				body: "",
 				label: label,
-				type: "traversal",
 				isValid: false,
+				type: "traversal",
 				signatureIndex: 0,
 				range: {} as TextRange,
 				labelRange: {} as TextRange
 			};
 
-			let openedParentheses = 0;
-
 			let body: string = "";
+
+			const hasStartingBracket = text.charAt(charIndex + stopIndex) === "(";
+
+			if (!hasStartingBracket) {
+				methodToken.range = {
+					start: charIndex,
+					end: charIndex + stopIndex
+				};
+
+				methodToken.labelRange = {
+					start: charIndex,
+					end: charIndex + stopIndex
+				};
+
+				methodToken.body = text.substring(charIndex, charIndex + stopIndex);
+
+				addResult(methodToken);
+
+				charIndex = methodToken.range.end;
+
+				continue;
+			}
+			
+			let openedParentheses = 0;
 
 			// lookahead, count open and closing parentheses
 			for (let i = charIndex + stopIndex; i < end; i++) {
@@ -243,6 +295,26 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 
 					break;
 				}
+			}
+
+			if (openedParentheses > 0) {
+				methodToken.range = {
+					start: charIndex,
+					end: charIndex + stopIndex
+				};
+
+				methodToken.labelRange = {
+					start: charIndex,
+					end: charIndex + stopIndex
+				};
+
+				methodToken.body = text.substring(charIndex, charIndex + stopIndex);
+
+				addResult(methodToken);
+
+				charIndex = methodToken.range.end;
+
+				continue;
 			}
 
 			methodToken.range = {
@@ -264,20 +336,23 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 			}
 
 			if (body.length > 0) {
-				const children = await parse(text, methodToken.range.start + label.length + 1, methodToken.range.end - 1, cancellationToken);
+				const children = await parse(text, methodToken.range.start + label.length + 1, methodToken.range.end - 1, cancellationToken, methodToken, methodToken);
 
-				methodToken.arguments = children;
+				if (Array.isArray(children) && children.length > 0) {
+					methodToken.parent = parent;
 
-				const matchingSignatures = signatures.filter(signature => signature.parameters.length === 0);
+					const signatureMatch = getBestGuessSignatureIndex(methodToken, children);
 
-				// TODO: determine the best matching signature
-				// TODO: check for "," between the arguments?
-				if (matchingSignatures.length > 0) {
-					methodToken.isValid = true;
+					if (signatureMatch != null) {
+						methodToken.isValid = true;
+						methodToken.signatureIndex = signatureMatch;
+					}
+
+					methodToken.arguments = children;
 				}
 			}
 
-			results.push(methodToken);
+			addResult(methodToken);
 
 			charIndex = methodToken.range.end - 1; // jumpt to before the closing parenthesis ")", the loop will jump ahead
 
@@ -288,17 +363,40 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 			const signatures = predicates[label as PredicateMethods];
 
 			const methodToken: Token = {
+				body: "",
 				label: label,
-				type: "predicate",
 				isValid: false,
+				type: "predicate",
 				signatureIndex: 0,
 				range: {} as TextRange,
 				labelRange: {} as TextRange
 			};
 
-			let openedParentheses = 0;
-
 			let body: string = "";
+
+			const hasStartingBracket = text.charAt(charIndex + stopIndex) === "(";
+
+			if (!hasStartingBracket) {
+				methodToken.range = {
+					start: charIndex,
+					end: charIndex + stopIndex
+				};
+
+				methodToken.labelRange = {
+					start: charIndex,
+					end: charIndex + stopIndex
+				};
+
+				methodToken.body = text.substring(charIndex, charIndex + stopIndex);
+
+				addResult(methodToken);
+
+				charIndex = methodToken.range.end;
+
+				continue;
+			}
+			
+			let openedParentheses = 0;
 
 			// lookahead, count open and closing parentheses
 			for (let i = charIndex + stopIndex; i < end; i++) {
@@ -317,6 +415,26 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 
 					break;
 				}
+			}
+
+			if (openedParentheses > 0) {
+				methodToken.range = {
+					start: charIndex,
+					end: charIndex + stopIndex
+				};
+
+				methodToken.labelRange = {
+					start: charIndex,
+					end: charIndex + stopIndex
+				};
+
+				methodToken.body = text.substring(charIndex, charIndex + stopIndex);
+
+				addResult(methodToken);
+
+				charIndex = methodToken.range.end;
+
+				continue;
 			}
 
 			methodToken.range = {
@@ -338,32 +456,23 @@ const parse = async (text: string, start: number, end: number, cancellationToken
 			}
 
 			if (body.length > 0) {
-				const children = await parse(text, methodToken.range.start + label.length + 1, methodToken.range.end - 1, cancellationToken);
+				const children = await parse(text, methodToken.range.start + label.length + 1, methodToken.range.end - 1, cancellationToken, methodToken, methodToken);
 
-				methodToken.arguments = children;
+				if (Array.isArray(children) && children.length > 0) {
+					methodToken.parent = parent;
 
-				const matchingSignatures = signatures.map((signature, index) => {
-					if (signature.parameters.length === methodToken.arguments?.length) {
-						return index;
+					const signatureMatch = getBestGuessSignatureIndex(methodToken, children);
+
+					if (signatureMatch != null) {
+						methodToken.isValid = true;
+						methodToken.signatureIndex = signatureMatch;
 					}
 
-					return -1;
-				}).filter(index => index != -1);
-
-				// TODO: determine the best matching signature
-				// TODO: check for "," between the arguments?
-				if (matchingSignatures.length > 0) {
-					methodToken.isValid = true;
-
-					matchingSignatures.forEach((signatureIndex) => {
-						const signature = signatures[signatureIndex];
-
-						// TODO: Match types and get a best guess
-					});
+					methodToken.arguments = children;
 				}
 			}
 
-			results.push(methodToken);
+			addResult(methodToken);
 
 			charIndex = methodToken.range.end - 1; // jumpt to before the closing parenthesis ")", the loop will jump ahead
 

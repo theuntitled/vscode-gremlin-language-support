@@ -28,7 +28,7 @@ export const parameterTypeToSymbolKind = (parameterType: ParameterTypes): Symbol
 		case "direction":
 			return SymbolKind.EnumMember;
 		case "predicate":
-			return SymbolKind.Operator;
+			return SymbolKind.Method;
 		case "comparator":
 			return SymbolKind.Operator;
 		case "cardinality":

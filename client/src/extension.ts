@@ -1,15 +1,14 @@
 import * as path from 'path';
-import { workspace, ExtensionContext, languages, SemanticTokensLegend } from 'vscode';
-import { SemanticTokensFeature } from "vscode-languageclient/lib/common/semanticTokens";
+import { workspace, ExtensionContext, languages } from 'vscode';
 
 import {
-	LanguageClient,
-	LanguageClientOptions,
+	TransportKind,
 	ServerOptions,
-	TransportKind
+	LanguageClient,
+	DocumentFilter,
+	LanguageClientOptions,
 } from 'vscode-languageclient/node';
 
-import GremlinDocumentSymbolProvider from './features/GremlinDocumentSymbolProvider';
 import { GremlinDocumentSemanticTokensProvider, legend } from './features/GremlinDocumentSemanticTokensProvider';
 
 let client: LanguageClient;
@@ -34,7 +33,10 @@ export function activate(context: ExtensionContext) {
 		}
 	};
 
-	const documentSelector = [{ scheme: 'file', language: 'gremlin' }];
+	const documentSelector: DocumentFilter[] = [{
+		scheme: 'file',
+		language: 'gremlin'
+	}];
 
 	// Options to control the language client
 	const clientOptions: LanguageClientOptions = {
@@ -57,7 +59,6 @@ export function activate(context: ExtensionContext) {
 	// Start the client. This will also launch the server
 	client.start();
 
-	// languages.registerDocumentSymbolProvider(documentSelector, new GremlinDocumentSymbolProvider());
 	languages.registerDocumentSemanticTokensProvider(documentSelector, new GremlinDocumentSemanticTokensProvider(client), legend);
 }
 
